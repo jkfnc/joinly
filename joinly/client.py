@@ -298,6 +298,22 @@ async def run(
                             f"2. THEN call mute_yourself()\n"
                             f"3. THEN call finish()"
                         )
+                elif input_lower.strip() == "unmute" or input_lower.strip() == "unmute.":
+                    # Special case for simple "unmute" command
+                    if is_local_model:
+                        enhanced_input = (
+                            f"{current_input}\n\n"
+                            f"The user wants you to unmute. Execute these EXACT steps:\n\n"
+                            f"1. Call the unmute_yourself tool\n"
+                            f"2. Call the speak_text tool with a confirmation message\n"
+                            f"3. Call the finish tool\n\n"
+                            f"DO NOT just write the tool names - actually CALL them!"
+                        )
+                    else:
+                        enhanced_input = (
+                            f"{current_input}\n\n"
+                            f"The user wants you to unmute. Call unmute_yourself() first, then speak_text() to confirm."
+                        )
                 else:
                     enhanced_input = (
                         f"{current_input}\n\n"
@@ -318,8 +334,16 @@ async def run(
                         if is_local_model and isinstance(result["output"], str):
                             output_text = result["output"]
                             
-                            # Check for unmute pattern in output
-                            if "unmute_yourself()" in output_text and "you are on mute" in current_input.lower():
+                            # Check for unmute pattern in output (multiple formats)
+                            unmute_patterns = [
+                                "unmute_yourself()",
+                                "unmute_yourself",
+                                "unmute()",
+                                'speak_text("thank you for letting me know. i have unmuted myself'
+                            ]
+                            
+                            if (any(pattern.lower() in output_text.lower() for pattern in unmute_patterns) and 
+                                ("unmute" in current_input.lower() or "you are on mute" in current_input.lower())):
                                 logger.warning("Local model output tool calls as text. Executing unmute sequence.")
                                 try:
                                     # Execute the unmute sequence
@@ -354,10 +378,23 @@ async def run(
                     # If no speak_text was used, force it
                     if "speak_text" not in tools_used and result.get("output"):
                         logger.warning("Agent didn't use speak_text, forcing speech output")
-                        try:
-                            await client.call_tool("speak_text", {"text": result["output"]})
-                        except Exception as e:
-                            logger.error("Failed to force speak_text: %s", e)
+                        
+                        # For local models with unmute command, check one more time
+                        if (is_local_model and 
+                            ("unmute" in current_input.lower()) and 
+                            not any(tool in tools_used for tool in ["unmute_yourself", "mute_yourself"])):
+                            logger.warning("Local model failed to unmute when asked. Forcing unmute.")
+                            try:
+                                await client.call_tool("unmute_yourself", {})
+                                await client.call_tool("speak_text", {"text": "I've unmuted myself. How can I help you?"})
+                                continue
+                            except Exception as e:
+                                logger.error("Failed to force unmute: %s", e)
+                        else:
+                            try:
+                                await client.call_tool("speak_text", {"text": result["output"]})
+                            except Exception as e:
+                                logger.error("Failed to force speak_text: %s", e)
                         
                 except Exception as e:
                     logger.error("Error processing transcript: %s", e)
