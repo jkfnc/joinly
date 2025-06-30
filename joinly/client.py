@@ -175,19 +175,24 @@ async def run(
         
         # Create appropriate agent based on model type
         if is_local_model:
-            # For local models, use a more explicit approach
-            from langchain.agents import create_structured_chat_agent
-            from langchain.memory import ConversationBufferMemory
-            
-            # Create a more explicit prompt for local models
-            local_prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt + "\n\nTOOL CALLING FORMAT:\nWhen you need to use a tool, respond with EXACTLY this format:\nAction: tool_name\nAction Input: {\"parameter\": \"value\"}\n\nExample:\nAction: speak_text\nAction Input: {\"text\": \"Hello there!\"}\n\nNEVER write the tool calls as plain text. Always use the Action/Action Input format."),
-                ("human", "{input}"),
-                MessagesPlaceholder(variable_name="agent_scratchpad"),
-            ])
-            
-            # Use structured chat agent which is better for local models
-            agent = create_structured_chat_agent(llm, tools, local_prompt)
+            # For local models, try binding tools explicitly
+            try:
+                # Try to bind tools to the model
+                llm_with_tools = llm.bind_tools(tools)
+                
+                # Use a simplified prompt that works better with local models
+                local_prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt + "\n\nIMPORTANT: You MUST use the provided tools to respond. NEVER respond with plain text. Always call tools."),
+                    ("human", "{input}"),
+                    MessagesPlaceholder(variable_name="agent_scratchpad"),
+                ])
+                
+                # Use tool-calling agent with bound tools
+                agent = create_tool_calling_agent(llm_with_tools, tools, local_prompt)
+            except Exception as e:
+                logger.warning(f"Failed to bind tools for local model: {e}. Using standard agent.")
+                # Fallback to standard agent
+                agent = create_tool_calling_agent(llm, tools, prompt)
             
             # More lenient settings for local models
             agent_executor = AgentExecutor(
