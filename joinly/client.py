@@ -130,10 +130,19 @@ async def run(
         "3. ALWAYS call 'finish' tool after using speak_text\n"
         "4. For unmute requests: use unmute_yourself THEN speak_text THEN finish\n"
         "5. For mute requests: use speak_text THEN mute_yourself THEN finish\n\n"
-        "Example response pattern:\n"
-        "- User says hello → speak_text('Hello! How can I help you?') → finish()\n"
-        "- User says unmute → unmute_yourself() → speak_text('I have unmuted myself') → finish()\n\n"
-        "Remember: You CANNOT respond without using tools. Use speak_text for ALL responses."
+        "IMPORTANT: You must use tools in EXACT order. No exceptions.\n\n"
+        "Example conversations:\n"
+        "User: 'Hello'\n"
+        "You: speak_text('Hello! How can I help you?') → finish()\n\n"
+        "User: 'You are on mute' or 'unmute yourself' or 'I can't hear you'\n"
+        "You: unmute_yourself() → speak_text('Thank you for letting me know. I have unmuted myself.') → finish()\n\n"
+        "User: 'Please mute yourself' or 'mute'\n"
+        "You: speak_text('I will mute myself now.') → mute_yourself() → finish()\n\n"
+        "User: 'What is the date?'\n"
+        "You: speak_text('Today is " + datetime.datetime.now(tz=datetime.UTC).strftime('%B %d, %Y') + ".') → finish()\n\n"
+        "NEVER say you will do something without actually doing it. If you say 'I will unmute', you MUST call unmute_yourself().\n"
+        "NEVER respond with just text. You MUST use tools for EVERY response.\n"
+        "If someone says you're muted, IMMEDIATELY call unmute_yourself() before speaking."
     )
 
     client = Client(mcp, message_handler=_message_handler)
@@ -213,10 +222,33 @@ async def run(
                 current_input = " ".join(s.text for s in transcript.segments)
                 
                 # Add explicit instruction to use tools
-                enhanced_input = (
-                    f"{current_input}\n\n"
-                    f"Remember: You MUST use speak_text tool to respond, then finish tool."
-                )
+                enhanced_input = current_input
+                
+                # Check for mute-related keywords and add specific instructions
+                input_lower = current_input.lower()
+                if any(phrase in input_lower for phrase in ["mute", "can't hear", "cannot hear", "not hearing"]):
+                    if any(phrase in input_lower for phrase in ["unmute", "you are on mute", "you're on mute", "you are muted", "you're muted", "can't hear you", "cannot hear you"]):
+                        enhanced_input = (
+                            f"{current_input}\n\n"
+                            f"INSTRUCTION: The user is telling you that you are muted. You MUST:\n"
+                            f"1. FIRST call unmute_yourself()\n"
+                            f"2. THEN call speak_text() to acknowledge\n"
+                            f"3. THEN call finish()\n"
+                            f"DO NOT just say you will unmute - actually call unmute_yourself() first!"
+                        )
+                    elif any(phrase in input_lower for phrase in ["mute yourself", "please mute", "go on mute"]):
+                        enhanced_input = (
+                            f"{current_input}\n\n"
+                            f"INSTRUCTION: The user wants you to mute. You MUST:\n"
+                            f"1. FIRST call speak_text() to acknowledge\n"
+                            f"2. THEN call mute_yourself()\n"
+                            f"3. THEN call finish()"
+                        )
+                else:
+                    enhanced_input = (
+                        f"{current_input}\n\n"
+                        f"Remember: You MUST use speak_text tool to respond, then finish tool."
+                    )
                 
                 logger.info("Agent processing input: %s", current_input)
                 
