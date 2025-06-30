@@ -20,7 +20,7 @@ from joinly.providers.browser.platforms import (
     ZoomBrowserPlatformController,
 )
 from joinly.settings import get_settings
-from joinly.types import AudioChunk, MeetingChatHistory
+from joinly.types import AudioChunk, MeetingChatHistory, MeetingParticipant
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -193,7 +193,7 @@ class BrowserMeetingProvider(BaseMeetingProvider):
         await agent.connect(self._browser_session.cdp_url)
         return agent
 
-    async def _invoke_action(
+    async def _invoke_action(  # noqa: C901
         self,
         action: str,
         prompt: str | None = None,
@@ -232,6 +232,12 @@ class BrowserMeetingProvider(BaseMeetingProvider):
                     result = await getattr(self._platform_controller, action)(
                         self._page, *args, **kwargs
                     )
+                except ValueError:
+                    logger.exception(
+                        "Failed to perform action '%s' using platform controller.",
+                        action,
+                    )
+                    raise
                 except Exception:
                     logger.exception(
                         "Failed to perform action '%s' using platform controller.",
@@ -309,7 +315,15 @@ class BrowserMeetingProvider(BaseMeetingProvider):
         prompt = f"Join the meeting at {url} as {name}."
         if passcode:
             prompt += f" If asked, use the passcode: {passcode}."
-        await self._invoke_action("join", prompt, url=url, name=name, passcode=passcode)
+        try:
+            await self._invoke_action(
+                "join", prompt, url=url, name=name, passcode=passcode
+            )
+        except:
+            await self._page.close()
+            self._page = None
+            self._platform_controller = None
+            raise
 
     async def leave(self) -> None:
         """Leave the current meeting."""
@@ -336,6 +350,14 @@ class BrowserMeetingProvider(BaseMeetingProvider):
             MeetingChatHistory: The chat history of the meeting.
         """
         return await self._invoke_action("get_chat_history")
+
+    async def get_participants(self) -> list[MeetingParticipant]:
+        """Get the list of participants in the meeting.
+
+        Returns:
+            list[MeetingParticipant]: A list of participants in the meeting.
+        """
+        return await self._invoke_action("get_participants")
 
     async def mute(self) -> None:
         """Mute yourself in the meeting."""

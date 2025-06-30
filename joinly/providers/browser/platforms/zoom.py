@@ -226,126 +226,35 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
 
         return participants
 
-
     async def mute(self, page: Page) -> None:
         """Mute the microphone in Zoom."""
         await self._activate_controls(page)
-        
-        # Log current button states for debugging
-        logger.info("Looking for mute/unmute buttons...")
-        
-        # Check if we're already muted by looking for unmute button
-        unmute_visible = False
-        try:
-            unmute_btn = page.get_by_role("button", name="unmute my microphone")
-            unmute_visible = await unmute_btn.is_visible(timeout=500)
-        except:
-            pass
-            
-        if unmute_visible:
-            logger.info("Already muted (unmute button is visible)")
-            return
 
-        # Try to find and click the mute button
-        try:
-            mute_btn = page.get_by_role("button", name="mute my microphone")
-            if await mute_btn.is_visible(timeout=1000):
-                await mute_btn.click(timeout=1000)
-                logger.info("Successfully clicked mute button")
-                return
-        except Exception as e:
-            logger.debug(f"Could not find mute button with get_by_role: {e}")
-        
-        # Try alternative selector
-        try:
-            mute_alt = page.locator("button[aria-label*='mute my microphone']").first
-            if await mute_alt.is_visible(timeout=1000):
-                await mute_alt.click(timeout=1000)
-                logger.info("Successfully clicked mute button (alt selector)")
-                return
-        except Exception as e:
-            logger.debug(f"Could not find mute button with alt selector: {e}")
-        
-        # If we still can't find it, log available buttons
-        try:
-            all_buttons = await page.locator("button").all()
-            audio_buttons = []
-            for btn in all_buttons[:20]:  # Check first 20 buttons
-                aria_label = await btn.get_attribute("aria-label") or ""
-                if any(word in aria_label.lower() for word in ["mute", "microphone", "audio", "mic"]):
-                    is_visible = await btn.is_visible()
-                    audio_buttons.append(f"{aria_label} (visible: {is_visible})")
-            logger.error(f"Could not find mute button. Audio-related buttons found: {audio_buttons}")
-        except:
-            pass
-            
-        msg = "Mute button not found or not visible."
-        raise RuntimeError(msg)
+        mute_btn = page.get_by_role("button", name="mute my microphone")
+        if await mute_btn.is_visible(timeout=1000):
+            await mute_btn.click(timeout=1000)
+        elif not await page.get_by_role(
+            "button", name="unmute my microphone"
+        ).is_visible(timeout=1000):
+            msg = "Mute button not found or not visible."
+            raise RuntimeError(msg)
 
     async def unmute(self, page: Page) -> None:
         """Unmute the microphone in Zoom."""
         await self._activate_controls(page)
-        
-        # Log current button states for debugging
-        logger.info("Looking for unmute/mute buttons...")
-        
-        # Check if we're already unmuted by looking for mute button
-        mute_visible = False
-        try:
-            mute_btn = page.get_by_role("button", name="mute my microphone")
-            mute_visible = await mute_btn.is_visible(timeout=500)
-        except:
-            pass
-            
-        if mute_visible:
-            logger.info("Already unmuted (mute button is visible)")
-            return
 
-        # Try to find and click the unmute button
-        try:
-            unmute_btn = page.get_by_role("button", name="unmute my microphone")
+        unmute_btn = page.get_by_role("button", name="unmute my microphone")
+        if await unmute_btn.is_visible(timeout=1000):
+            await unmute_btn.click(timeout=1000)
             if await unmute_btn.is_visible(timeout=1000):
-                await unmute_btn.click(timeout=1000)
-                logger.info("Successfully clicked unmute button")
-                # Sometimes Zoom requires a second click
-                await page.wait_for_timeout(500)
-                if await unmute_btn.is_visible(timeout=500):
-                    logger.info("Clicking unmute again to confirm")
+                with contextlib.suppress(Exception):
                     await unmute_btn.click(timeout=1000)
-                return
-        except Exception as e:
-            logger.debug(f"Could not find unmute button with get_by_role: {e}")
-        
-        # Try alternative selector
-        try:
-            unmute_alt = page.locator("button[aria-label*='unmute my microphone']").first
-            if await unmute_alt.is_visible(timeout=1000):
-                await unmute_alt.click(timeout=1000)
-                logger.info("Successfully clicked unmute button (alt selector)")
-                # Check for second click
-                await page.wait_for_timeout(500)
-                if await unmute_alt.is_visible(timeout=500):
-                    logger.info("Clicking unmute again to confirm")
-                    await unmute_alt.click(timeout=1000)
-                return
-        except Exception as e:
-            logger.debug(f"Could not find unmute button with alt selector: {e}")
-        
-        # If we still can't find it, log available buttons
-        try:
-            all_buttons = await page.locator("button").all()
-            audio_buttons = []
-            for btn in all_buttons[:20]:  # Check first 20 buttons
-                aria_label = await btn.get_attribute("aria-label") or ""
-                if any(word in aria_label.lower() for word in ["mute", "microphone", "audio", "mic"]):
-                    is_visible = await btn.is_visible()
-                    audio_buttons.append(f"{aria_label} (visible: {is_visible})")
-            logger.error(f"Could not find unmute button. Audio-related buttons found: {audio_buttons}")
-        except:
-            pass
-            
-        msg = "Unmute button not found or not visible."
-        raise RuntimeError(msg)
+        elif not await page.get_by_role("button", name="mute my microphone").is_visible(
+            timeout=1000
+        ):
+            msg = "Unmute button not found or not visible."
+            raise RuntimeError(msg)
+
 
     async def _check_joined(self, page: Page, timeout: float = 10) -> bool:  # noqa: ASYNC109
         """Check if the Zoom meeting has been joined successfully.
