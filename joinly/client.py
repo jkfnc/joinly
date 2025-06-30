@@ -119,6 +119,14 @@ async def run(
             transcript_event.set()
 
     llm = init_chat_model(model_name, model_provider=model_provider)
+    
+    # Check if it's a local model
+    is_local_model = model_provider in ["ollama", "llamacpp", "local"] or any(
+        name in model_name.lower() for name in ["llama", "mistral", "devstral", "qwen"]
+    )
+    
+    if is_local_model:
+        logger.info("Detected local model: %s. Using enhanced prompting for tool calls.", model_name)
 
     # More explicit system prompt that forces tool usage
     system_prompt = (
@@ -165,17 +173,42 @@ async def run(
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         
-        # Create tool-calling agent
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        
-        # Create agent executor
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=True,  # Enable verbose to see what's happening
-            handle_parsing_errors=True,
-            max_iterations=5,
-        )
+        # Create appropriate agent based on model type
+        if is_local_model:
+            # For local models, use a more explicit approach
+            from langchain.agents import create_structured_chat_agent
+            from langchain.memory import ConversationBufferMemory
+            
+            # Create a more explicit prompt for local models
+            local_prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt + "\n\nTOOL CALLING FORMAT:\nWhen you need to use a tool, respond with EXACTLY this format:\nAction: tool_name\nAction Input: {\"parameter\": \"value\"}\n\nExample:\nAction: speak_text\nAction Input: {\"text\": \"Hello there!\"}\n\nNEVER write the tool calls as plain text. Always use the Action/Action Input format."),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
+            
+            # Use structured chat agent which is better for local models
+            agent = create_structured_chat_agent(llm, tools, local_prompt)
+            
+            # More lenient settings for local models
+            agent_executor = AgentExecutor(
+                agent=agent,
+                tools=tools,
+                verbose=True,
+                handle_parsing_errors=True,
+                max_iterations=3,  # Fewer iterations for local models
+                return_intermediate_steps=True,
+            )
+        else:
+            # For cloud models, use the standard tool-calling agent
+            agent = create_tool_calling_agent(llm, tools, prompt)
+            
+            agent_executor = AgentExecutor(
+                agent=agent,
+                tools=tools,
+                verbose=True,
+                handle_parsing_errors=True,
+                max_iterations=5,
+            )
         
         last_time = -1.0
         recent_context = []
@@ -228,14 +261,30 @@ async def run(
                 input_lower = current_input.lower()
                 if any(phrase in input_lower for phrase in ["mute", "can't hear", "cannot hear", "not hearing"]):
                     if any(phrase in input_lower for phrase in ["unmute", "you are on mute", "you're on mute", "you are muted", "you're muted", "can't hear you", "cannot hear you"]):
-                        enhanced_input = (
-                            f"{current_input}\n\n"
-                            f"INSTRUCTION: The user is telling you that you are muted. You MUST:\n"
-                            f"1. FIRST call unmute_yourself()\n"
-                            f"2. THEN call speak_text() to acknowledge\n"
-                            f"3. THEN call finish()\n"
-                            f"DO NOT just say you will unmute - actually call unmute_yourself() first!"
-                        )
+                        if is_local_model:
+                            # Even more explicit for local models
+                            enhanced_input = (
+                                f"{current_input}\n\n"
+                                f"CRITICAL: The user says you are muted. You MUST execute these actions IN ORDER:\n\n"
+                                f"Action: unmute_yourself\n"
+                                f"Action Input: {{}}\n\n"
+                                f"THEN:\n"
+                                f"Action: speak_text\n"
+                                f"Action Input: {{\"text\": \"Thank you for letting me know. I have unmuted myself.\"}}\n\n"
+                                f"THEN:\n"
+                                f"Action: finish\n"
+                                f"Action Input: {{}}\n\n"
+                                f"START NOW with the unmute_yourself action!"
+                            )
+                        else:
+                            enhanced_input = (
+                                f"{current_input}\n\n"
+                                f"INSTRUCTION: The user is telling you that you are muted. You MUST:\n"
+                                f"1. FIRST call unmute_yourself()\n"
+                                f"2. THEN call speak_text() to acknowledge\n"
+                                f"3. THEN call finish()\n"
+                                f"DO NOT just say you will unmute - actually call unmute_yourself() first!"
+                            )
                     elif any(phrase in input_lower for phrase in ["mute yourself", "please mute", "go on mute"]):
                         enhanced_input = (
                             f"{current_input}\n\n"
@@ -259,6 +308,21 @@ async def run(
                     # Log what happened
                     if "output" in result:
                         logger.info("Agent final output: %s", result["output"])
+                        
+                        # For local models, check if they output tool calls as text
+                        if is_local_model and isinstance(result["output"], str):
+                            output_text = result["output"]
+                            
+                            # Check for unmute pattern in output
+                            if "unmute_yourself()" in output_text and "you are on mute" in current_input.lower():
+                                logger.warning("Local model output tool calls as text. Executing unmute sequence.")
+                                try:
+                                    # Execute the unmute sequence
+                                    await client.call_tool("unmute_yourself", {})
+                                    await client.call_tool("speak_text", {"text": "Thank you for letting me know. I have unmuted myself and am ready to assist you."})
+                                    continue  # Skip the rest and wait for next input
+                                except Exception as e:
+                                    logger.error("Failed to execute unmute sequence: %s", e)
                     
                     # Check if speak_text was used
                     tools_used = []
