@@ -107,7 +107,17 @@ class VirtualMicrophone(PulseModuleManager, AudioWriter):
 
         logger.info("Setting up FIFO file for writing: %s", self.fifo_path)
         fd = os.open(self.fifo_path, os.O_WRONLY)
-        fcntl.fcntl(fd, fcntl.F_SETPIPE_SZ, self.pipe_size)
+        
+        # Try to set pipe size, but don't fail if it doesn't work (WSL compatibility)
+        try:
+            fcntl.fcntl(fd, fcntl.F_SETPIPE_SZ, self.pipe_size)
+            logger.info("Set pipe size to %d bytes", self.pipe_size)
+        except OSError as e:
+            logger.warning(
+                "Could not set pipe size to %d bytes: %s. Using system default. "
+                "This is common in WSL and should not affect functionality.",
+                self.pipe_size, e
+            )
 
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.connect_write_pipe(
