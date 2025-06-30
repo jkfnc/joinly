@@ -328,6 +328,20 @@ async def run(
                                     continue  # Skip the rest and wait for next input
                                 except Exception as e:
                                     logger.error("Failed to execute unmute sequence: %s", e)
+                            
+                            # Additional check for when model says it can't unmute
+                            if ("unmute" in current_input.lower() and 
+                                any(phrase in output_text.lower() for phrase in [
+                                    "unable to", "can't", "cannot", "don't have access", "no access"
+                                ])):
+                                logger.warning("Local model claims it can't unmute. Forcing unmute sequence.")
+                                try:
+                                    # Execute the unmute sequence anyway
+                                    await client.call_tool("unmute_yourself", {})
+                                    await client.call_tool("speak_text", {"text": "I've unmuted myself. How can I assist you?"})
+                                    continue  # Skip the rest and wait for next input
+                                except Exception as e:
+                                    logger.error("Failed to force unmute sequence: %s", e)
                     
                     # Check if speak_text was used
                     tools_used = []
